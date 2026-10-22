@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<title>WinSpotlight</title>
+<style>
+  :root {
+    --accent: #0a84ff;
+    --bg: rgba(32,32,32,.62);
+    --fg: #ffffff;
+    --fg-2: rgba(255,255,255,.60);
+    --fg-3: rgba(255,255,255,.40);
+    --edge: rgba(255,255,255,.08);
+    --line: rgba(255,255,255,.06);
+    --hover: rgba(255,255,255,.04);
+    --sel: rgba(255,255,255,.07);
+  }
+  body.light {
+    --bg: rgba(243,243,243,.72);
+    --fg: rgba(0,0,0,.90);
+    --fg-2: rgba(0,0,0,.58);
+    --fg-3: rgba(0,0,0,.42);
+    --edge: rgba(0,0,0,.08);
+    --line: rgba(0,0,0,.06);
+    --hover: rgba(0,0,0,.03);
+    --sel: rgba(0,0,0,.05);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; height: 100%; }
+  body {
+    font: 14px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--fg);
+    user-select: none;
+    cursor: default;
+  }
+
+  .panel {
+    background: var(--bg);
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px var(--edge);
+    overflow: hidden;
+  }
+  .panel.enter { animation: fade .12s ease-out; }
+  @keyframes fade { from { opacity: 0; } }
+
+  /* søkefelt */
+  .bar { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 18px; }
+  .bar svg { width: 18px; height: 18px; flex: none; color: var(--fg-2); }
+  #q {
+    flex: 1; min-width: 0;
+    background: none; border: 0; outline: 0;
+    font: 20px/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
+    color: var(--fg);
+    caret-color: var(--fg);
+  }
+  #q::placeholder { color: var(--fg-3); }
+  #q::selection { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+  /* resultater */
+  .results { display: none; border-top: 1px solid var(--line); padding: 4px 6px 6px; max-height: 560px; overflow-y: auto; }
+  .has-results .results { display: block; }
+  .results::-webkit-scrollbar { width: 0; }
+  .group { font-size: 12px; font-weight: 600; color: var(--fg-2); padding: 10px 12px 4px; }
+
+  .row {
+    position: relative;
+    display: flex; align-items: center; gap: 12px;
+    height: 40px; padding: 0 12px;
+    border-radius: 4px;
+  }
+  .row:hover { background: var(--hover); }
+  .row.sel { background: var(--sel); }
+  .row.sel::before {
+    content: ""; position: absolute; left: 0; top: 50%;
+    width: 3px; height: 16px; margin-top: -8px;
+    border-radius: 2px; background: var(--accent);
+  }
+  .row.top { height: 52px; }
+
+  .icon { width: 24px; height: 24px; flex: none; display: grid; place-items: center; color: var(--fg-2); }
+  .icon img { width: 24px; height: 24px; object-fit: contain; }
+  .icon img.thumb { object-fit: cover; border-radius: 3px; }
+  .icon svg { width: 18px; height: 18px; }
+  .row.top .icon, .row.top .icon img { width: 32px; height: 32px; }
+
+  .text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .row.top .text, .row.calc .text { flex-direction: column; align-items: flex-start; gap: 0; }
+  .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 70%; }
+  .title mark { background: none; color: inherit; font-weight: 600; }
+  .sub { font-size: 12px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .row.top .title { font-size: 15px; max-width: 100%; }
+  .row.top .sub { color: var(--fg-2); }
+
+  .hint { font-size: 12px; color: var(--fg-3); white-space: nowrap; display: none; }
+  .row.sel .hint { display: block; }
+
+  .actions { display: none; gap: 2px; flex: none; }
+  .row.sel .actions { display: flex; }
+  .act {
+    font: 12px/1 "Segoe UI Variable Text", "Segoe UI", system-ui;
+    color: var(--fg-2);
+    background: none; border: 0; border-radius: 4px;
+    padding: 6px 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .act:hover { background: var(--sel); color: var(--fg); }
+  .act:active { opacity: .7; }
+  .act svg { width: 14px; height: 14px; }
+  .act.done { color: var(--fg); }
+
+  .row.calc { height: 60px; }
+  .row.calc .title { font: 22px/1.2 "Segoe UI Variable Display", "Segoe UI"; max-width: 100%; }
+</style>
+</head>
+<body>
+<div class="panel" id="panel">
+  <div class="bar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></svg>
+    <input id="q" placeholder="Søk" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="results" id="results"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const q = $('#q'), resultsEl = $('#results'), panel = $('#panel');
+let items = [], sel = 0, seq = 0, lastH = 0, mouseArmed = false;
+
+const ICON = {
+  web:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 3.9 5.8 3.9 9s-1.3 6.2-3.9 9c-2.6-2.8-3.9-5.8-3.9-9S9.4 5.8 12 3z"/></svg>',
+  url:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg>',
+  calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 7.5h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>',
+  cmd:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+  showall: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+};
+const HINT = { calc: 'Enter for å kopiere', web: 'Enter for å søke', url: 'Enter for å åpne', cmd: 'Enter for å kjøre', showall: 'Enter for å vise' };
+const COPY_LABEL = { calc: 'Kopier svar', url: 'Kopier lenke', web: 'Kopier lenke', cmd: 'Kopier' };
+function actionsHTML(it) {
+  if (!it.copy && !it.reveal) return '';
+  return `<div class="actions">${it.reveal ? `
+  <button class="act" data-act="reveal" title="Åpne filplassering (Ctrl+Enter)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Filplassering</button>` : ''}${it.copy ? `
+  <button class="act" data-act="copy" title="Kopier (Ctrl+Shift+C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>${COPY_LABEL[it.kind] || 'Kopier bane'}</span></button>` : ''}
+</div>`;
+}
+
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function highlight(t, query) {
+  const ql = query.trim().toLowerCase();
+  if (!ql) return esc(t);
+  const tl = t.toLowerCase(), i = tl.indexOf(ql);
+  if (i >= 0) return esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + ql.length)) + '</mark>' + esc(t.slice(i + ql.length));
+  // løs match: fortsett i samme ord, ellers hopp til neste ordstart
+  const isStart = k => k === 0 || !/[\p{L}\p{N}]/u.test(tl[k - 1]);
+  const hit = new Set();
+  let pos = -1;
+  for (const ch of ql) {
+    let k = -1;
+    if (pos >= 0 && tl[pos + 1] === ch) k = pos + 1;
+    else for (let m = pos + 1; m < tl.length; m++) if (tl[m] === ch && isStart(m)) { k = m; break; }
+    if (k < 0) return esc(t);
+    hit.add(k); pos = k;
+  }
+  return [...t].map((c, k) => hit.has(k) ? '<mark>' + esc(c) + '</mark>' : esc(c)).join('');
+}
+
+function iconHTML(it) {
+  if (it.icon) {
+    const thumb = it.kind === 'file' && /\.(png|jpe?g|gif|bmp|webp|heic|tiff?|mp4|mov|mkv|psd)$/i.test(it.title);
+    return `<img src="${it.icon}"${thumb ? ' class="thumb"' : ''} draggable="false">`;
+  }
+  return ICON[it.kind] || ICON.file;
+}
+
+function rowHTML(it, i, query) {
+  const cls = ['row', it.kind];
+  if (it.group === 'Topptreff') cls.push('top');
+  const title = it.kind === 'web' ? `Søk etter «${esc(it.title)}»`
+              : it.kind === 'url' ? `Åpne ${esc(it.title)}`
+              : it.kind === 'calc' ? esc(it.title)
+              : highlight(it.title, query);
+  return `<div class="${cls.join(' ')}" data-i="${i}">
+      <div class="icon">${iconHTML(it)}</div>
+      <div class="text"><div class="title">${title}</div><div class="sub">${esc(it.sub || '')}</div></div>
+      ${(it.copy || it.reveal) ? actionsHTML(it) : `<div class="hint">${HINT[it.kind] || 'Enter for å åpne'}</div>`}
+    </div>`;
+}
+
+function render(list, query) {
+  items = list; sel = 0;
+  let html = '', group = null;
+  list.forEach((it, i) => {
+    if (it.group !== group && it.kind !== 'calc') html += `<div class="group">${esc(it.group)}</div>`;
+    group = it.group;
+    html += rowHTML(it, i, query);
+  });
+  resultsEl.innerHTML = html;
+  document.body.classList.toggle('has-results', list.length > 0);
+  paint();
+  report();
+}
+
+function paint() {
+  resultsEl.querySelectorAll('.row').forEach(r => r.classList.toggle('sel', +r.dataset.i === sel));
+  const el = resultsEl.querySelector('.row.sel');
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function report() {
+  setTimeout(() => {
+    const h = Math.ceil(panel.getBoundingClientRect().height);
+    if (h !== lastH) { lastH = h; pywebview.api.resize(h); }
+  }, 0);
+}
+
+async function doSearch() {
+  const v = q.value, my = ++seq;
+  const list = await pywebview.api.search(v);
+  if (my === seq) render(list || [], v);
+}
+
+async function doAction(i, name) {
+  const it = items[i];
+  if (!it) return;
+  if (name === 'reveal' && !it.reveal) { activate(i); return; }
+  if (name === 'copy' && !it.copy) return;
+  const btn = resultsEl.querySelector(`.row[data-i="${i}"] .act[data-act="${name}"]`);
+  if (btn && name === 'copy') btn.querySelector('span').textContent = 'Kopierer…';
+  const r = await pywebview.api.action(it.id, name);
+  if (r === 'copied') {
+    const btn = resultsEl.querySelector(`.row[data-i="${i}"] .act[data-act="copy"]`);
+    if (btn) { btn.classList.add('done'); btn.querySelector('span').textContent = 'Kopiert'; }
+    setTimeout(() => pywebview.api.hide(), 500);
+  }
+}
+
+async function activate(i, reveal) {
+  const it = items[i];
+  if (!it) return;
+  const r = await pywebview.api.open(it.id, !!reveal);
+  if (r === 'showall') { setQuery('alle apper'); return; }
+  if (r === 'copied') {
+    const hint = resultsEl.querySelector(`.row[data-i="${i}"] .hint`);
+    if (hint) hint.textContent = 'Kopiert';
+    setTimeout(() => pywebview.api.hide(), 500);
+  }
+}
+
+q.addEventListener('input', doSearch);
+q.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) { e.preventDefault(); if (items.length) { sel = (sel + 1) % items.length; paint(); } }
+  else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) { e.preventDefault(); if (items.length) { sel = (sel - 1 + items.length) % items.length; paint(); } }
+  else if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); doAction(sel, 'reveal'); }
+  else if (e.key === 'Enter') { e.preventDefault(); activate(sel); }
+  else if (e.ctrlKey && e.shiftKey && (e.code === 'KeyC' || e.key.toLowerCase() === 'c')) { e.preventDefault(); doAction(sel, 'copy'); }
+  else if (e.key === 'Escape') { e.preventDefault(); if (q.value) { q.value = ''; doSearch(); } else pywebview.api.hide(); }
+});
+resultsEl.addEventListener('mousemove', e => {
+  if (!mouseArmed) { mouseArmed = true; return; }
+  const r = e.target.closest('.row');
+  if (r && +r.dataset.i !== sel) { sel = +r.dataset.i; paint(); }
+});
+resultsEl.addEventListener('click', e => {
+  const r = e.target.closest('.row');
+  if (!r) return;
+  const btn = e.target.closest('.act');
+  if (btn) doAction(+r.dataset.i, btn.dataset.act);
+  else if (e.ctrlKey) doAction(+r.dataset.i, 'reveal');
+  else activate(+r.dataset.i);
+});
+document.addEventListener('mousedown', e => { if (e.target !== q) setTimeout(() => q.focus(), 0); });
+
+window.reset = () => { q.value = ''; render([], ''); };
+window.onShow = () => {
+  mouseArmed = false;
+  panel.classList.remove('enter'); void panel.offsetWidth; panel.classList.add('enter');
+  q.focus();
+};
+window.setQuery = v => { q.value = v; doSearch(); };
+
+window.addEventListener('pywebviewready', async () => {
+  const c = await pywebview.api.config();
+  document.documentElement.style.setProperty('--accent', c.accent);
+  document.body.classList.toggle('light', c.light);
+});
+</script>
+</body>
+</html>
